@@ -1,0 +1,6 @@
+Drop  TABLE z00cp88.OB_freebie_promotions_dets;
+
+  Create table z00cp88.OB_freebie_promotions_dets  as
+WIth promos as (Select distinct offer_redmeed_promotion_id, campaign_id
+  FROM prd_tc360_fnd.TC360_Monthly_Freebies_Guest_Redeemers_NonRedeemers
+    WHERE fiscal_week_end_d BETWEEN DATE('2025-08-01') AND DATE('2026-02-28'))
