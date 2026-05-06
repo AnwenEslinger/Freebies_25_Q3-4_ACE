@@ -1,0 +1,165 @@
+DROP TABLE IF EXISTS z00cp88.tc360_freebies_funnel_final;
+
+CREATE TABLE z00cp88.tc360_freebies_funnel_final AS
+
+WITH months AS (
+    SELECT DISTINCT
+        date_format(calendar_d, 'yyyy-MM') AS campaign_year_mon
+    FROM prd_cal_fnd.calendar
+    WHERE calendar_d BETWEEN DATE '2025-07-01' AND DATE '2026-02-28'
+),
+
+guests AS (
+    SELECT DISTINCT guest_profile_id
+    FROM prd_tc360_fnd.tc360_members
+    WHERE fiscal_month_end_d BETWEEN DATE '2025-07-30' AND DATE '2026-03-05'
+      AND loyalty_pillar_360_adjusted_type_c IN ('3','4')
+),
+
+spine AS (
+    SELECT
+        g.guest_profile_id,
+        m.campaign_year_mon
+    FROM guests g
+    CROSS JOIN months m
+),
+
+base AS (
+    SELECT
+        guest_profile_id,
+        date_format(fiscal_month_end_d, 'yyyy-MM') AS campaign_year_mon,
+        circle_360_membership_current_start_d,
+
+        MAX(CASE 
+            WHEN circle_360_membership_recurrence_units = 'year' THEN 'Annual'
+            WHEN circle_360_membership_recurrence_units = 'month' THEN 'Monthly'
+        END) AS yearly_monthly_member,
+
+        MAX(loyalty_pillar_360_adjusted_type_n) AS loyalty_pillar_type_n,
+
+        MAX(CASE  
+            WHEN guest_segment_le_abbr_n = 'super' THEN 'Super'
+            WHEN guest_segment_le_abbr_n = 'steady' THEN 'Steady'
+            WHEN guest_segment_le_abbr_n IN ('sporadic','sparse') THEN 'LEGs'
+            ELSE 'Other'
+        END) AS segment
+
+    FROM prd_tc360_fnd.tc360_members
+    WHERE fiscal_month_end_d BETWEEN DATE '2025-07-30' AND DATE '2026-03-05'
+      AND loyalty_pillar_360_adjusted_type_c IN ('3','4')
+
+    GROUP BY guest_profile_id,
+             date_format(fiscal_month_end_d, 'yyyy-MM'),
+             circle_360_membership_current_start_d
+),
+
+exploded AS (
+    SELECT
+        t.guest_profile_id,
+        date_format(t.issued_d, 'yyyy-MM') AS campaign_year_mon,
+        pm.id AS promotion_id,
+        t.claim_d
+    FROM prd_gdp_fnd.loyalty_freebies_activity t
+    LATERAL VIEW OUTER explode(benefit_claimed_arr) adj AS pm
+    WHERE t.action_n = 'SELECT'
+      AND t.source_n = 'CAMPAIGN'
+      AND t.issued_d BETWEEN DATE '2025-08-01' AND DATE '2026-02-28'
+),
+
+parsed AS (
+    SELECT
+        e.guest_profile_id,
+        e.campaign_year_mon,
+        e.promotion_id,
+        MIN(a.activity_d) AS redemption_d
+    FROM exploded e
+    LEFT JOIN prd_gdp_fnd.loyalty_offer_activity a
+      ON e.guest_profile_id = a.guest_profile_id
+     AND e.promotion_id = a.offer_id
+     AND a.offer_activity_type_n = 'BENEFIT_REDEEMED'
+     AND a.activity_d >= e.claim_d
+    GROUP BY
+        e.guest_profile_id,
+        e.campaign_year_mon,
+        e.promotion_id
+),
+
+funnel AS (
+    SELECT
+        guest_profile_id,
+        date_format(COALESCE(issued_d, reveal_d, claim_d), 'yyyy-MM') AS campaign_year_mon,
+
+        MAX(CASE WHEN issued_f THEN 1 ELSE 0 END) AS eligible_flag,
+        MAX(CASE WHEN reveal_f THEN 1 ELSE 0 END) AS reveal_flag,
+        MAX(CASE WHEN action_n = 'SELECT' THEN 1 ELSE 0 END) AS select_flag
+
+    FROM prd_gdp_fnd.loyalty_freebies_activity
+    WHERE source_n = 'CAMPAIGN'
+      AND COALESCE(issued_d, reveal_d, claim_d)
+          BETWEEN DATE '2025-08-01' AND DATE '2026-02-28'
+
+    GROUP BY guest_profile_id,
+             date_format(COALESCE(issued_d, reveal_d, claim_d), 'yyyy-MM')
+),
+
+selection AS (
+    SELECT
+        p.guest_profile_id,
+        p.campaign_year_mon,
+
+        MAX(p.promotion_id) AS promotion_id,
+        MAX(d.promotion_n) AS selection_n,
+        MAX(d.reward_type) AS reward_type,
+        MAX(d.brand_n) AS brand_n,
+        MAX(d.ob_flag) AS ob_flag,
+
+        MAX(CASE WHEN d.promotion_class = 'DS' THEN 1 ELSE 0 END) AS picked_free_item,
+        MAX(CASE WHEN d.promotion_class = 'HD' THEN 1 ELSE 0 END) AS picked_brand_credit,
+        MAX(CASE WHEN p.redemption_d IS NOT NULL THEN 1 ELSE 0 END) AS redeem_flag
+
+    FROM parsed p
+    LEFT JOIN z00cp88.OB_freebie_promotions_dets d
+      ON p.promotion_id = d.promotion_id
+
+    GROUP BY
+        p.guest_profile_id,
+        p.campaign_year_mon
+)
+
+SELECT
+    s.guest_profile_id,
+    s.campaign_year_mon,
+
+    COALESCE(f.eligible_flag, 1) AS eligible_flag,
+    COALESCE(f.reveal_flag, 0) AS reveal_flag,
+    COALESCE(f.select_flag, 0) AS select_flag,
+    COALESCE(sel.redeem_flag, 0) AS redeem_flag,
+
+    COALESCE(sel.promotion_id, 'no_selection') AS selection,
+    COALESCE(sel.selection_n, 'no_selection') AS selection_n,
+
+    COALESCE(sel.reward_type, 'NONE') AS reward_type,
+    COALESCE(sel.brand_n, 'UNKNOWN') AS brand_n,
+    COALESCE(sel.ob_flag, 'N') AS ob_flag,
+
+    COALESCE(sel.picked_free_item, 0) AS picked_free_item,
+    COALESCE(sel.picked_brand_credit, 0) AS picked_brand_credit,
+
+    b.circle_360_membership_current_start_d,
+    b.yearly_monthly_member,
+    b.loyalty_pillar_type_n,
+    b.segment
+
+FROM spine s
+
+LEFT JOIN base b
+  ON s.guest_profile_id = b.guest_profile_id
+ AND s.campaign_year_mon = b.campaign_year_mon
+
+LEFT JOIN funnel f
+  ON s.guest_profile_id = f.guest_profile_id
+ AND s.campaign_year_mon = f.campaign_year_mon
+
+LEFT JOIN selection sel
+  ON s.guest_profile_id = sel.guest_profile_id
+ AND s.campaign_year_mon = sel.campaign_year_mon;
