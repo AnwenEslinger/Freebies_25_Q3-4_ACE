@@ -1,0 +1,73 @@
+-- Created by Anwen Eslinger on Wed Apr 08 2026
+-- Connected to bigred3
+DROP table  z00cp88.Freebies_promosales ;
+Create table z00cp88.Freebies_promosales as 
+Select s.*, group_id
+,group_n
+,division_id
+,division_n
+,department_id
+,department_n
+,class_id
+,class_n
+,sub_class_id
+,sub_class_c
+,sub_class_n
+,product_type_id
+,product_type_n
+,product_sub_type_id
+,product_sub_type_n
+,merchandise_type_id
+,merchandise_type_n
+,item_type_category_type
+,item_type_id
+,item_type_n,
+is_target_owned_brand_f,
+brand_type_n,
+brand_id,
+brand_n from z00cp88.OB_freebie_all_sales s
+  left join   prd_itm_fnd.item a on a.tcin = s.tcin
+  where promotion_id in ( '663278470', 
+'300526285', 
+'529604556', 
+'693340638', 
+'458408217', 
+'197204975', 
+'403218513', 
+'727816339', 
+'706897376', 
+'254754916', 
+'874314410', 
+'447765300', 
+'836507773', 
+'964578258', 
+'430407691', 
+'469736609', 
+'954409374', 
+'420630252', 
+'254434945', 
+'161838672', 
+'112456674', 
+'485396786', 
+'518993994', 
+'123759321', 
+'570497840', 
+'925341020', 
+'474327341', 
+'853504593', 
+'888932511', 
+'673658487', 
+'620427037', 
+'556147002', 
+'689551804', 
+'635555381', 
+'233390091', 
+'279439396', 
+'245597343', 
+'301333100', 
+'552820564')
+
+
+
+
+
